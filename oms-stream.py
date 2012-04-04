@@ -29,6 +29,7 @@ global playing
 global track, artist
 global bus
 global connected
+global taginject
 
 #
 #  Helper Functions
@@ -36,8 +37,9 @@ global connected
 
 # Update song metadata when track changes
 def TrackChange(Track):
-	# the only mandatory metadata is "URI"
+	# Parse necessary metadata
 	global track, artist
+	global taginject
 	try:
 		artist = Track["artist"]
 	except:
@@ -46,6 +48,8 @@ def TrackChange(Track):
 		track = Track["title"]
 	except:
 		track = Track["URI"]
+	# Update GUI with artist and track name
+	taginject.set_property("tags","title=" + track + ",artist=" + artist)
 	l_artist.set_text(artist)
 	l_title.set_text(track)
 
@@ -71,6 +75,7 @@ def Connect():
 	playstatus = player.GetStatus()
 	if playstatus[0] == 0:
 		playing = True
+		# Update track information
 		TrackChange(player.GetMetadata())
 	# Update Connected state
 	connected = True
@@ -79,6 +84,7 @@ def Connect():
 #  Widget Callbacks
 #
 
+# Widget Callback -- Connect toggle button clicked
 def clickConnect(widget):
 	global connected
 	if connected == False:
@@ -120,5 +126,50 @@ bus = dbus.SessionBus()
 connected = False
 playing = False
 
+#
+#  GStreamer initialization
+#
+
+# New GStreamer Pipeline
+pipeline = gst.Pipeline("gstpipe")
+
+# Our source is pulse audio
+pulsesrc = gst.element_factory_make("pulsesrc", "pulse")
+pulsesrc.set_property("device","alsa_input.pci-0000_00_06.0.analog-stereo") # Audio input
+pipeline.add(pulsesrc)
+
+# Convert audio module
+audioconvert = gst.element_factory_make("audioconvert", "ac")
+pipeline.add(audioconvert)
+
+# Inject tags onto the stream
+taginject = gst.element_factory_make("taginject", "ti")
+taginject.set_property("tags","ARTIST=Test,TITLE=Also Test")
+pipeline.add(taginject)
+
+# Encode the stream as vorbis
+vorbisenc = gst.element_factory_make("vorbisenc", "venc")
+pipeline.add(vorbisenc)
+
+# mux the stream to .ogg format
+oggmux = gst.element_factory_make("oggmux", "omux")
+pipeline.add(oggmux)
+
+# Sink is icecast 
+shout2send = gst.element_factory_make("shout2send", "s2s")
+shout2send.set_property("mount","/omsradio.ogg")
+shout2send.set_property("port",8000)
+shout2send.set_property("password","hackme")
+shout2send.set_property("ip","localhost")
+shout2send.set_property("streamname","OMS Radio")
+shout2send.set_property("genre","Eclectic")
+shout2send.set_property("description","Eclectic blend of musical goodness")
+pipeline.add(shout2send);
+gst.element_link_many(pulsesrc,audioconvert,taginject,vorbisenc,oggmux,shout2send)
+pipeline.set_state(gst.STATE_PLAYING)
+
+#                  #
 ####  MAIN LOOP ####
+#                  #
+
 gtk.main() 
